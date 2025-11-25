@@ -119,3 +119,15 @@ if os.path.exists('baza_faktur.csv'):
 else:
 
     st.info("Baza jest pusta.")
+# --- DIAGNOSTYKA (Wklej na końcu pliku app.py) ---
+st.divider()
+if st.button("🛠️ Pokaż dostępne modele AI"):
+    try:
+        genai.configure(api_key=api_key)
+        st.write("Dostępne modele dla Twojego klucza:")
+        for m in genai.list_models():
+            # Pokaż tylko te, które potrafią generować treść
+            if 'generateContent' in m.supported_generation_methods:
+                st.code(m.name)
+    except Exception as e:
+        st.error(f"Błąd połączenia: {e}")
