@@ -20,7 +20,7 @@ def analyze_invoice(image):
         return None
     
     genai.configure(api_key=api_key)
-    model = genai.GenerativeModel('gemini-1.5-flash-latest')
+    model = genai.GenerativeModel('gemini-1.5-flash-001')
 
     prompt = """
     Jesteś asystentem księgowym. Przeanalizuj ten obraz faktury.
@@ -131,3 +131,4 @@ if st.button("🛠️ Pokaż dostępne modele AI"):
                 st.code(m.name)
     except Exception as e:
         st.error(f"Błąd połączenia: {e}")
+
