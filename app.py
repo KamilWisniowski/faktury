@@ -20,7 +20,7 @@ def analyze_invoice(image):
         return None
     
     genai.configure(api_key=api_key)
-    model = genai.GenerativeModel('gemini-1.5-flash')
+    model = genai.GenerativeModel('gemini-1.5-flash-latest')
 
     prompt = """
     Jesteś asystentem księgowym. Przeanalizuj ten obraz faktury.
@@ -117,4 +117,5 @@ if os.path.exists('baza_faktur.csv'):
         mime='text/csv',
     )
 else:
+
     st.info("Baza jest pusta.")
