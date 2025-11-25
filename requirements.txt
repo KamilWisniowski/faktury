@@ -2,3 +2,4 @@ streamlit
 google-generativeai>=0.7.0
 pandas
 pillow
+pdf2image
