@@ -4,23 +4,23 @@ from PIL import Image
 import pandas as pd
 import json
 import os
+import time
 from datetime import datetime
 
 # --- KONFIGURACJA STRONY ---
-st.set_page_config(page_title="AI Księgowy", layout="wide")
+st.set_page_config(page_title="AI Księgowy - Masowy", layout="wide")
 
 # --- KONFIGURACJA AI ---
-# W wersji produkcyjnej klucz trzymamy w "Secrets", nie w kodzie!
-# Instrukcja niżej wyjaśni jak to zrobić bezpiecznie.
 api_key = st.secrets.get("GOOGLE_API_KEY", None)
 
+# Funkcja analizy (bez zmian, tylko drobne usprawnienie błędów)
 def analyze_invoice(image):
-    """Wysyła obraz do Gemini i prosi o JSON"""
     if not api_key:
         return None
     
+    # Używamy modelu, który u Ciebie zadziałał
     genai.configure(api_key=api_key)
-    model = genai.GenerativeModel('gemini-2.0-flash')
+    model = genai.GenerativeModel('gemini-2.0-flash') 
 
     prompt = """
     Jesteś asystentem księgowym. Przeanalizuj ten obraz faktury.
@@ -34,102 +34,101 @@ def analyze_invoice(image):
     
     try:
         response = model.generate_content([prompt, image])
-        # Czyszczenie odpowiedzi z potencjalnych znaczników markdown ```json
         text_response = response.text.replace('```json', '').replace('```', '').strip()
         return json.loads(text_response)
     except Exception as e:
-        st.error(f"Błąd przetwarzania AI: {e}")
-        return None
+        # Zwracamy pusty słownik w razie błędu, żeby nie wysypać całej pętli
+        return {"sprzedawca": "BŁĄD ODCZYTU", "data_wystawienia": "", "kwota_brutto": 0.0}
 
 # --- INTERFEJS UŻYTKOWNIKA ---
-st.title("📄 Inteligentny Rejestr Faktur")
-st.markdown("Wgraj fakturę (JPG/PNG), a AI wyciągnie z niej dane.")
+st.title("📄 Masowy Rejestr Faktur")
+st.markdown("Wgraj jedną lub wiele faktur naraz. AI przetworzy je kolejno.")
 
-# Sekcja boczna - API Key (dla testów lokalnych)
+# API Key w sidebarze (jeśli nie ma w secrets)
 if not api_key:
     temp_key = st.sidebar.text_input("Podaj klucz Google API", type="password")
     if temp_key:
         os.environ["GOOGLE_API_KEY"] = temp_key
         api_key = temp_key
     else:
-        st.warning("Musisz podać klucz API, aby aplikacja działała.")
+        st.warning("Musisz podać klucz API.")
         st.stop()
 
-# 1. Okno uploadu
-uploaded_file = st.file_uploader("Wybierz plik faktury", type=["jpg", "jpeg", "png"])
+# Inicjalizacja stanu (żeby dane nie znikały po kliknięciu)
+if 'analysed_data' not in st.session_state:
+    st.session_state['analysed_data'] = pd.DataFrame(columns=["Sprzedawca", "Data wystawienia", "Kwota"])
 
-if uploaded_file is not None:
-    # Wyświetl obraz
-    image = Image.open(uploaded_file)
-    col1, col2 = st.columns([1, 1])
+# 1. Okno uploadu (accept_multiple_files=True)
+uploaded_files = st.file_uploader("Wybierz pliki faktur (JPG/PNG)", type=["jpg", "jpeg", "png"], accept_multiple_files=True)
+
+# Przycisk startu analizy
+if uploaded_files:
+    if st.button(f"🚀 Przeanalizuj {len(uploaded_files)} faktur"):
+        
+        progress_bar = st.progress(0)
+        results = []
+        
+        for i, file in enumerate(uploaded_files):
+            # Otwórz obraz
+            image = Image.open(file)
+            
+            # Zapytaj AI
+            data = analyze_invoice(image)
+            
+            if data:
+                # Dodajemy wynik do listy
+                results.append({
+                    "Nazwa pliku": file.name,
+                    "Sprzedawca": data.get('sprzedawca'),
+                    "Data wystawienia": data.get('data_wystawienia'),
+                    "Kwota": float(data.get('kwota_brutto', 0.0) or 0.0) # Zabezpieczenie przed None
+                })
+            
+            # Aktualizacja paska postępu
+            progress_bar.progress((i + 1) / len(uploaded_files))
+            # Mała przerwa, żeby nie "zajechać" API (Rate Limit)
+            time.sleep(1) 
+            
+        st.session_state['analysed_data'] = pd.DataFrame(results)
+        st.success("Analiza zakończona! Sprawdź tabelę poniżej.")
+
+# 2. Edycja i Zapis
+if not st.session_state['analysed_data'].empty:
+    st.divider()
+    st.subheader("✏️ Zweryfikuj dane przed zapisem")
+    st.info("Możesz klikać w komórki tabeli i poprawiać dane ręcznie.")
     
-    with col1:
-        st.image(image, caption='Podgląd faktury', use_container_width=True)
+    # Wyświetlamy edytowalną tabelę (Data Editor)
+    edited_df = st.data_editor(st.session_state['analysed_data'], num_rows="dynamic", use_container_width=True)
+    
+    # Przycisk zapisu
+    if st.button("💾 Zapisz wszystko do Bazy CSV"):
+        # Dodajemy datę dodania rekordu
+        edited_df["Data dodania"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        
+        csv_file = 'baza_faktur.csv'
+        if os.path.exists(csv_file):
+            old_df = pd.read_csv(csv_file)
+            final_df = pd.concat([old_df, edited_df], ignore_index=True)
+        else:
+            final_df = edited_df
+            
+        final_df.to_csv(csv_file, index=False)
+        st.toast(f"Zapisano {len(edited_df)} faktur!", icon="✅")
+        
+        # Opcjonalnie: wyczyść widok po zapisie
+        # st.session_state['analysed_data'] = pd.DataFrame() 
+        # st.rerun()
 
-    with col2:
-        if st.button("🔍 Przeanalizuj fakturę"):
-            with st.spinner('AI analizuje dokument...'):
-                data = analyze_invoice(image)
-                
-                if data:
-                    st.success("Analiza zakończona!")
-                    
-                    # Edycja danych przed zapisem (gdyby AI się pomyliło)
-                    with st.form("edit_data"):
-                        sprzedawca = st.text_input("Sprzedawca", value=data.get('sprzedawca'))
-                        data_wyst = st.text_input("Data wystawienia", value=data.get('data_wystawienia'))
-                        kwota = st.number_input("Kwota Brutto", value=float(data.get('kwota_brutto', 0.0)))
-                        
-                        submitted = st.form_submit_button("💾 Zapisz do Bazy")
-                        
-                        if submitted:
-                            # --- ZAPIS DO BAZY (Tutaj CSV) ---
-                            new_entry = {
-                                "Data dodania": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                                "Sprzedawca": sprzedawca,
-                                "Data wystawienia": data_wyst,
-                                "Kwota": kwota
-                            }
-                            
-                            # Wczytaj istniejącą bazę lub stwórz nową
-                            csv_file = 'baza_faktur.csv'
-                            if os.path.exists(csv_file):
-                                df = pd.read_csv(csv_file)
-                                df = pd.concat([df, pd.DataFrame([new_entry])], ignore_index=True)
-                            else:
-                                df = pd.DataFrame([new_entry])
-                            
-                            df.to_csv(csv_file, index=False)
-                            st.toast("Faktura zapisana pomyślnie!", icon="✅")
-
-# --- WIDOK BAZY DANYCH ---
+# --- WIDOK ISTNIEJĄCEJ BAZY ---
 st.divider()
-st.subheader("📂 Twoja Baza Faktur")
+st.subheader("📂 Historia (Baza Danych)")
 if os.path.exists('baza_faktur.csv'):
-    df = pd.read_csv('baza_faktur.csv')
-    st.dataframe(df, use_container_width=True)
-    
-    # Przycisk pobierania Excela
-    st.download_button(
-        label="Pobierz dane jako CSV",
-        data=df.to_csv(index=False).encode('utf-8'),
-        file_name='faktury.csv',
-        mime='text/csv',
-    )
+    df_history = pd.read_csv('baza_faktur.csv')
+    # Sortowanie od najnowszych
+    if "Data dodania" in df_history.columns:
+        df_history = df_history.sort_values(by="Data dodania", ascending=False)
+        
+    st.dataframe(df_history, use_container_width=True)
 else:
-
-    st.info("Baza jest pusta.")
-# --- DIAGNOSTYKA (Wklej na końcu pliku app.py) ---
-st.divider()
-if st.button("🛠️ Pokaż dostępne modele AI"):
-    try:
-        genai.configure(api_key=api_key)
-        st.write("Dostępne modele dla Twojego klucza:")
-        for m in genai.list_models():
-            # Pokaż tylko te, które potrafią generować treść
-            if 'generateContent' in m.supported_generation_methods:
-                st.code(m.name)
-    except Exception as e:
-        st.error(f"Błąd połączenia: {e}")
-
-
+    st.text("Baza jest jeszcze pusta.")
